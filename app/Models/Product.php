@@ -10,19 +10,22 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Product extends Model
 {
     use HasFactory;
-
     protected $fillable = [
         'tenant_id',
         'category_id',
+        'product_type_id',
+        'brand_id',
         'name',
         'sku',
         'description',
         'image',
+        'is_public',
     ];
 
-    /**
-     * Product belongs to a tenant.
-     */
+    protected $casts = [
+        'is_public' => 'boolean',
+    ];
+
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
@@ -34,6 +37,22 @@ class Product extends Model
     public function category(): BelongsTo
     {
         return $this->belongsTo(Category::class);
+    }
+
+    /**
+     * Product belongs to a product type.
+     */
+    public function productType(): BelongsTo
+    {
+        return $this->belongsTo(ProductType::class);
+    }
+
+    /**
+     * Product belongs to a brand.
+     */
+    public function brand(): BelongsTo
+    {
+        return $this->belongsTo(Brand::class);
     }
 
     /**

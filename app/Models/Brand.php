@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class Category extends Model
+class Brand extends Model
 {
     use HasFactory;
 
@@ -17,7 +17,7 @@ class Category extends Model
     ];
 
     /**
-     * Category belongs to a tenant.
+     * Brand belongs to a tenant.
      */
     public function tenant(): BelongsTo
     {
@@ -25,14 +25,10 @@ class Category extends Model
     }
 
     /**
-     * Category has many products.
+     * Brand has many products.
      */
     public function products(): HasMany
     {
         return $this->hasMany(Product::class);
-    }
-    public function productTypes(): HasMany
-    {
-        return $this->hasMany(ProductType::class);
     }
 }

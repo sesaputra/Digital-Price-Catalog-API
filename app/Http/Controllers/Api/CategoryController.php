@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Category;
 use Illuminate\Http\Request;
+use App\Http\Resources\CategoryResource;
 
 class CategoryController extends Controller
 {
@@ -17,12 +18,10 @@ class CategoryController extends Controller
             'tenant_id',
             $request->user()->tenant_id
         )
-        ->latest()
-        ->get();
-
-        return response()->json([
-            'data' => $categories,
-        ]);
+            ->orderBy('name')
+            ->get();
+            
+        return CategoryResource::collection($categories);
     }
 
     /**
@@ -43,10 +42,12 @@ class CategoryController extends Controller
             'name' => $validated['name'],
         ]);
 
-        return response()->json([
-            'message' => 'Kategori berhasil dibuat.',
-            'data' => $category,
-        ], 201);
+        return (new CategoryResource($category))
+            ->additional([
+                'message' => 'Kategori berhasil dibuat.',
+            ])
+            ->response()
+            ->setStatusCode(201);
     }
 
     /**
@@ -60,9 +61,7 @@ class CategoryController extends Controller
             ], 404);
         }
 
-        return response()->json([
-            'data' => $category,
-        ]);
+        return new CategoryResource($category);
     }
 
     /**
@@ -88,10 +87,10 @@ class CategoryController extends Controller
             'name' => $validated['name'],
         ]);
 
-        return response()->json([
-            'message' => 'Kategori berhasil diperbarui.',
-            'data' => $category,
-        ]);
+        return (new CategoryResource($category))
+            ->additional([
+                'message' => 'Kategori berhasil diperbarui.',
+            ]);
     }
 
     /**

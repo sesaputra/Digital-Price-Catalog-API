@@ -3,34 +3,191 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\ProductResource;
+use App\Models\Brand;
+use App\Models\Category;
 use App\Models\Product;
+use App\Models\ProductType;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rule;
 
 class ProductController extends Controller
 {
+    /**
+     * Display a listing of products.
+     */
     public function index(Request $request)
     {
-        $products = Product::with([
+        $tenantId = $request->user()->tenant_id;
+
+        $query = Product::with([
             'category',
+            'productType',
+            'brand',
             'variants',
         ])
-        ->where('tenant_id', $request->user()->tenant_id)
-        ->latest()
-        ->get();
+            ->where('tenant_id', $tenantId);
 
-        return response()->json([
-            'data' => $products,
-        ]);
+        /*
+    |--------------------------------------------------------------------------
+    | Search
+    |--------------------------------------------------------------------------
+    */
+
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+
+            $query->where(function ($q) use ($search) {
+                $q->where(
+                    'name',
+                    'like',
+                    "%{$search}%"
+                )
+                    ->orWhere(
+                        'sku',
+                        'like',
+                        "%{$search}%"
+                    )
+                    ->orWhereHas(
+                        'brand',
+                        function ($brandQuery) use ($search) {
+                            $brandQuery->where(
+                                'name',
+                                'like',
+                                "%{$search}%"
+                            );
+                        }
+                    )
+                    ->orWhereHas(
+                        'productType',
+                        function ($typeQuery) use ($search) {
+                            $typeQuery->where(
+                                'name',
+                                'like',
+                                "%{$search}%"
+                            );
+                        }
+                    )
+                    ->orWhereHas(
+                        'variants',
+                        function ($variantQuery) use ($search) {
+                            $variantQuery->where(
+                                'name',
+                                'like',
+                                "%{$search}%"
+                            );
+                        }
+                    );
+            });
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Category Filter
+    |--------------------------------------------------------------------------
+    */
+
+        if ($request->filled('category_id')) {
+            $query->where(
+                'category_id',
+                $request->category_id
+            );
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Product Type Filter
+    |--------------------------------------------------------------------------
+    */
+
+        if ($request->filled('product_type_id')) {
+            $query->where(
+                'product_type_id',
+                $request->product_type_id
+            );
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Brand Filter
+    |--------------------------------------------------------------------------
+    */
+
+        if ($request->filled('brand_id')) {
+            $query->where(
+                'brand_id',
+                $request->brand_id
+            );
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Pagination
+    |--------------------------------------------------------------------------
+    */
+
+        $perPage = min(
+            (int) $request->input('per_page', 10),
+            50
+        );
+
+        $products = $query
+            ->orderBy('name')
+            ->paginate($perPage)
+            ->withQueryString();
+
+        return ProductResource::collection($products);
     }
 
+    /**
+     * Store a newly created product.
+     */
     public function store(Request $request)
     {
+        $tenantId = $request->user()->tenant_id;
+
         $validated = $request->validate([
             'category_id' => [
                 'required',
                 'integer',
+
+                Rule::exists('categories', 'id')
+                    ->where(
+                        fn($query) =>
+                        $query->where(
+                            'tenant_id',
+                            $tenantId
+                        )
+                    ),
+            ],
+
+            'product_type_id' => [
+                'required',
+                'integer',
+
+                Rule::exists('product_types', 'id')
+                    ->where(
+                        fn($query) =>
+                        $query->where(
+                            'tenant_id',
+                            $tenantId
+                        )
+                    ),
+            ],
+
+            'brand_id' => [
+                'required',
+                'integer',
+
+                Rule::exists('brands', 'id')
+                    ->where(
+                        fn($query) =>
+                        $query->where(
+                            'tenant_id',
+                            $tenantId
+                        )
+                    ),
             ],
 
             'name' => [
@@ -50,6 +207,12 @@ class ProductController extends Controller
                 'string',
             ],
 
+            'image' => [
+                'nullable',
+                'string',
+                'max:255',
+            ],
+
             'variants' => [
                 'required',
                 'array',
@@ -65,7 +228,7 @@ class ProductController extends Controller
             'variants.*.unit' => [
                 'required',
                 'string',
-                'max:50',
+                'max:100',
             ],
 
             'variants.*.price' => [
@@ -75,40 +238,57 @@ class ProductController extends Controller
             ],
         ]);
 
-        $tenantId = $request->user()->tenant_id;
-
         /*
         |--------------------------------------------------------------------------
-        | Pastikan kategori milik tenant yang sedang login
+        | Pastikan ProductType berada di Category yang dipilih
         |--------------------------------------------------------------------------
         */
 
-        $categoryExists = \App\Models\Category::where('id', $validated['category_id'])
-            ->where('tenant_id', $tenantId)
-            ->exists();
+        $productType = ProductType::where(
+            'id',
+            $validated['product_type_id']
+        )
+            ->where(
+                'tenant_id',
+                $tenantId
+            )
+            ->first();
 
-        if (!$categoryExists) {
-            throw ValidationException::withMessages([
-                'category_id' => [
-                    'Kategori tidak ditemukan.',
-                ],
-            ]);
+        if (!$productType) {
+            return response()->json([
+                'message' => 'Jenis produk tidak ditemukan.',
+            ], 404);
+        }
+
+        if (
+            $productType->category_id !==
+            (int) $validated['category_id']
+        ) {
+            return response()->json([
+                'message' =>
+                'Jenis produk tidak sesuai dengan kategori yang dipilih.',
+            ], 422);
         }
 
         /*
         |--------------------------------------------------------------------------
-        | Buat Product + Variant dalam satu transaksi
+        | Simpan Product + Variants
         |--------------------------------------------------------------------------
         */
 
-        $product = DB::transaction(function () use ($validated, $tenantId) {
-
+        $product = DB::transaction(function () use (
+            $validated,
+            $tenantId
+        ) {
             $product = Product::create([
                 'tenant_id' => $tenantId,
                 'category_id' => $validated['category_id'],
+                'product_type_id' => $validated['product_type_id'],
+                'brand_id' => $validated['brand_id'],
                 'name' => $validated['name'],
                 'sku' => $validated['sku'] ?? null,
                 'description' => $validated['description'] ?? null,
+                'image' => $validated['image'] ?? null,
             ]);
 
             foreach ($validated['variants'] as $variant) {
@@ -124,23 +304,24 @@ class ProductController extends Controller
 
         $product->load([
             'category',
+            'productType',
+            'brand',
             'variants',
         ]);
 
-        return response()->json([
-            'message' => 'Produk berhasil dibuat.',
-            'data' => $product,
-        ], 201);
+        return (new ProductResource($product))
+            ->additional([
+                'message' => 'Produk berhasil dibuat.',
+            ])
+            ->response()
+            ->setStatusCode(201);
     }
 
+    /**
+     * Display the specified product.
+     */
     public function show(Request $request, Product $product)
     {
-        /*
-        |--------------------------------------------------------------------------
-        | Pastikan product milik tenant
-        |--------------------------------------------------------------------------
-        */
-
         if ($product->tenant_id !== $request->user()->tenant_id) {
             return response()->json([
                 'message' => 'Produk tidak ditemukan.',
@@ -149,32 +330,81 @@ class ProductController extends Controller
 
         $product->load([
             'category',
+            'productType',
+            'brand',
             'variants',
         ]);
 
-        return response()->json([
-            'data' => $product,
-        ]);
+        return new ProductResource($product);
     }
+    /**
+     * Update the specified product.
+     */
+    public function update(
+        Request $request,
+        Product $product
+    ) {
+        $tenantId = $request->user()->tenant_id;
 
-    public function update(Request $request, Product $product)
-    {
         /*
         |--------------------------------------------------------------------------
-        | Pastikan product milik tenant
+        | Tenant Check
         |--------------------------------------------------------------------------
         */
 
-        if ($product->tenant_id !== $request->user()->tenant_id) {
+        if ($product->tenant_id !== $tenantId) {
             return response()->json([
                 'message' => 'Produk tidak ditemukan.',
             ], 404);
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Validation
+        |--------------------------------------------------------------------------
+        */
+
         $validated = $request->validate([
             'category_id' => [
                 'required',
                 'integer',
+
+                Rule::exists('categories', 'id')
+                    ->where(
+                        fn($query) =>
+                        $query->where(
+                            'tenant_id',
+                            $tenantId
+                        )
+                    ),
+            ],
+
+            'product_type_id' => [
+                'required',
+                'integer',
+
+                Rule::exists('product_types', 'id')
+                    ->where(
+                        fn($query) =>
+                        $query->where(
+                            'tenant_id',
+                            $tenantId
+                        )
+                    ),
+            ],
+
+            'brand_id' => [
+                'required',
+                'integer',
+
+                Rule::exists('brands', 'id')
+                    ->where(
+                        fn($query) =>
+                        $query->where(
+                            'tenant_id',
+                            $tenantId
+                        )
+                    ),
             ],
 
             'name' => [
@@ -194,6 +424,12 @@ class ProductController extends Controller
                 'string',
             ],
 
+            'image' => [
+                'nullable',
+                'string',
+                'max:255',
+            ],
+
             'variants' => [
                 'required',
                 'array',
@@ -209,7 +445,7 @@ class ProductController extends Controller
             'variants.*.unit' => [
                 'required',
                 'string',
-                'max:50',
+                'max:100',
             ],
 
             'variants.*.price' => [
@@ -219,39 +455,62 @@ class ProductController extends Controller
             ],
         ]);
 
-        $tenantId = $request->user()->tenant_id;
-
         /*
         |--------------------------------------------------------------------------
-        | Validasi kategori
+        | Pastikan ProductType sesuai Category
         |--------------------------------------------------------------------------
         */
 
-        $categoryExists = \App\Models\Category::where('id', $validated['category_id'])
-            ->where('tenant_id', $tenantId)
-            ->exists();
+        $productType = ProductType::where(
+            'id',
+            $validated['product_type_id']
+        )
+            ->where(
+                'tenant_id',
+                $tenantId
+            )
+            ->first();
 
-        if (!$categoryExists) {
-            throw ValidationException::withMessages([
-                'category_id' => [
-                    'Kategori tidak ditemukan.',
-                ],
-            ]);
+        if (!$productType) {
+            return response()->json([
+                'message' => 'Jenis produk tidak ditemukan.',
+            ], 404);
         }
 
-        DB::transaction(function () use ($product, $validated) {
+        if (
+            $productType->category_id !==
+            (int) $validated['category_id']
+        ) {
+            return response()->json([
+                'message' =>
+                'Jenis produk tidak sesuai dengan kategori yang dipilih.',
+            ], 422);
+        }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Update Product + Variants
+        |--------------------------------------------------------------------------
+        */
+
+        DB::transaction(function () use (
+            $product,
+            $validated
+        ) {
             $product->update([
                 'category_id' => $validated['category_id'],
+                'product_type_id' => $validated['product_type_id'],
+                'brand_id' => $validated['brand_id'],
                 'name' => $validated['name'],
                 'sku' => $validated['sku'] ?? null,
                 'description' => $validated['description'] ?? null,
+                'image' => $validated['image'] ?? null,
             ]);
 
             /*
             |--------------------------------------------------------------------------
-            | Untuk MVP:
-            | hapus variant lama lalu buat ulang variant baru
+            | MVP:
+            | Hapus variant lama kemudian buat ulang
             |--------------------------------------------------------------------------
             */
 
@@ -268,24 +527,27 @@ class ProductController extends Controller
 
         $product->load([
             'category',
+            'productType',
+            'brand',
             'variants',
         ]);
 
-        return response()->json([
-            'message' => 'Produk berhasil diperbarui.',
-            'data' => $product,
-        ]);
+        return (new ProductResource($product))
+            ->additional([
+                'message' => 'Produk berhasil diperbarui.',
+            ]);
     }
 
-    public function destroy(Request $request, Product $product)
-    {
-        /*
-        |--------------------------------------------------------------------------
-        | Pastikan product milik tenant
-        |--------------------------------------------------------------------------
-        */
+    /**
+     * Remove the specified product.
+     */
+    public function destroy(
+        Request $request,
+        Product $product
+    ) {
+        $tenantId = $request->user()->tenant_id;
 
-        if ($product->tenant_id !== $request->user()->tenant_id) {
+        if ($product->tenant_id !== $tenantId) {
             return response()->json([
                 'message' => 'Produk tidak ditemukan.',
             ], 404);
