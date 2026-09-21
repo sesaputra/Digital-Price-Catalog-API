@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CategoryController;
+use App\Http\Controllers\Api\ProductController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function () {
@@ -17,4 +18,5 @@ Route::prefix('auth')->group(function () {
 Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
 
     Route::apiResource('categories', CategoryController::class);
+    Route::apiResource('products', ProductController::class);
 });
