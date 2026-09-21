@@ -7,17 +7,18 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class Category extends Model
+class ProductType extends Model
 {
     use HasFactory;
 
     protected $fillable = [
         'tenant_id',
+        'category_id',
         'name',
     ];
 
     /**
-     * Category belongs to a tenant.
+     * Product type belongs to a tenant.
      */
     public function tenant(): BelongsTo
     {
@@ -25,14 +26,18 @@ class Category extends Model
     }
 
     /**
-     * Category has many products.
+     * Product type belongs to a category.
+     */
+    public function category(): BelongsTo
+    {
+        return $this->belongsTo(Category::class);
+    }
+
+    /**
+     * Product type has many products.
      */
     public function products(): HasMany
     {
         return $this->hasMany(Product::class);
-    }
-    public function productTypes(): HasMany
-    {
-        return $this->hasMany(ProductType::class);
     }
 }

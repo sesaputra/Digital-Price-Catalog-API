@@ -11,20 +11,20 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('product_variants', function (Blueprint $table) {
+        Schema::create('brands', function (Blueprint $table) {
             $table->id();
 
-            $table->foreignId('product_id')
-                ->constrained('products')
+            $table->foreignId('tenant_id')
+                ->constrained('tenants')
                 ->cascadeOnDelete();
 
             $table->string('name');
 
-            $table->string('unit');
-
-            $table->decimal('price', 15, 2);
-
             $table->timestamps();
+
+            // Satu tenant tidak boleh memiliki
+            // brand dengan nama yang sama.
+            $table->unique(['tenant_id', 'name']);
         });
     }
 
@@ -33,6 +33,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('product_variants');
+        Schema::dropIfExists('brands');
     }
 };

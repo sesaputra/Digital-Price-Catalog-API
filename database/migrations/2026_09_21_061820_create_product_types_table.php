@@ -11,7 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('products', function (Blueprint $table) {
+        Schema::create('product_types', function (Blueprint $table) {
             $table->id();
 
             $table->foreignId('tenant_id')
@@ -19,16 +19,20 @@ return new class extends Migration
                 ->cascadeOnDelete();
 
             $table->foreignId('category_id')
-                ->nullable()
                 ->constrained('categories')
-                ->nullOnDelete();
+                ->cascadeOnDelete();
 
             $table->string('name');
-            $table->string('sku')->nullable();
-            $table->text('description')->nullable();
-            $table->string('image')->nullable();
 
             $table->timestamps();
+
+            // Satu tenant tidak boleh memiliki
+            // jenis produk yang sama dalam kategori yang sama.
+            $table->unique([
+                'tenant_id',
+                'category_id',
+                'name',
+            ]);
         });
     }
 
@@ -37,6 +41,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('products');
+        Schema::dropIfExists('product_types');
     }
 };
